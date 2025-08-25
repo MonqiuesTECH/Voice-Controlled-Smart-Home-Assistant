@@ -1,8 +1,4 @@
-import os
-import io
-import json
-import socket
-import tempfile
+import os, io, json, socket, tempfile
 from typing import Optional, Dict, Any
 
 import streamlit as st
@@ -18,11 +14,10 @@ from command_parser import parse_command
 # Config & Branding
 # -----------------------------
 def _get_secret_bool(name: str, default: bool) -> bool:
-    raw = None
     try:
         raw = st.secrets.get(name)
     except Exception:
-        pass
+        raw = None
     if raw is None:
         raw = os.getenv(name, str(default))
     return str(raw).lower() in ("1", "true", "yes", "y", "on")
@@ -33,7 +28,7 @@ BRIDGE_PORT = int(st.secrets.get("BRIDGE_PORT", os.getenv("BRIDGE_PORT", "8765")
 
 st.set_page_config(page_title="Voice Smart Home", page_icon="🎙️")
 st.title("🎙️ Voice-Controlled Smart Home Assistant")
-st.caption("Powered by ZARI")
+st.caption("Powered by ZARI")  # branding
 
 if "sim_gpio" not in st.session_state:
     st.session_state.sim_gpio = {
@@ -55,13 +50,11 @@ st.sidebar.write("**Mode:**", "SIMULATOR" if SIMULATOR_MODE else "HARDWARE (sock
 
 @st.cache_resource(show_spinner=True)
 def load_whisper_model(size: str, compute: str):
-    # CPU-friendly
     return WhisperModel(size, compute_type=compute)
 
 whisper = load_whisper_model(model_size, compute_type)
 
 def _normalize_to_wav_16k_mono_bytes(blob: bytes) -> bytes:
-    """Return WAV bytes (mono, 16k, PCM16) from input audio bytes."""
     seg = AudioSegment.from_file(io.BytesIO(blob))
     seg = seg.set_channels(1).set_frame_rate(16000)
     samples = np.array(seg.get_array_of_samples()).astype(np.int16)
@@ -83,11 +76,10 @@ def _transcribe(wav_path: str, lang_hint: Optional[str]) -> Dict[str, Any]:
 st.subheader("1) Capture Audio")
 
 tab_mic, tab_upload = st.tabs(["🎤 Microphone", "📁 Upload Audio"])
-
 audio_bytes: Optional[bytes] = None
 
 with tab_mic:
-    st.write("Click **Start** to record, then **Stop**. Use **Transcribe & Execute** below.")
+    st.write("Press **Start**, speak, then **Stop**. Use **Transcribe & Execute** below.")
     rec = mic_recorder(
         start_prompt="Start",
         stop_prompt="Stop",
@@ -115,57 +107,39 @@ run = st.button("Transcribe & Execute", type="primary", disabled=(audio_bytes is
 
 if run:
     if audio_bytes is None:
-        st.warning("No audio yet. Record or upload first.")
-        st.stop()
+        st.warning("No audio yet. Record or upload first."); st.stop()
 
-    # Normalize to mono 16k WAV for Whisper
     with st.spinner("Transcribing…"):
         try:
             wav_norm = _normalize_to_wav_16k_mono_bytes(audio_bytes)
         except Exception as e:
-            st.error(f"Unable to read audio: {e}")
-            st.stop()
+            st.error(f"Unable to read audio: {e}"); st.stop()
 
         with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tmpf:
-            tmpf.write(wav_norm)
-            wav_path = tmpf.name
+            tmpf.write(wav_norm); wav_path = tmpf.name
 
         tx = _transcribe(wav_path, lang_choice)
-        transcript = tx["text"]
-        detected_lang = tx["detected_lang"]
+        transcript = tx["text"]; detected_lang = tx["detected_lang"]
 
-    st.write("**Transcript**")
-    st.code(transcript or "(empty)")
+    st.write("**Transcript**"); st.code(transcript or "(empty)")
 
-    # Parse (English + Spanish supported)
-    intent = parse_command(transcript)
-    st.write("**Parsed command**")
-    st.json(intent)
+    intent = parse_command(transcript)  # English + Spanish supported
+    st.write("**Parsed command**"); st.json(intent)
 
-    # Execute
     if SIMULATOR_MODE:
-        device = intent.get("device")
-        action = intent.get("action")
-        location = (intent.get("location") or "home")
-        value = intent.get("value")
+        device = intent.get("device"); action = intent.get("action")
+        location = (intent.get("location") or "home"); value = intent.get("value")
 
-        key = None
         if device in ("light", "fan"):
             key = f"{device}:{location}"
-            if action in ("on", "off"):
-                st.session_state.sim_gpio[key] = (action == "on")
+            if action in ("on", "off"): st.session_state.sim_gpio[key] = (action == "on")
         elif device == "thermostat":
-            key = "thermostat:home"
-            if isinstance(value, (int, float)):
-                st.session_state.sim_gpio[key] = int(value)
+            if isinstance(value, (int, float)): st.session_state.sim_gpio["thermostat:home"] = int(value)
         elif device == "garage":
-            key = "garage:door"
-            if action in ("open", "close"):
-                st.session_state.sim_gpio[key] = "open" if action == "open" else "closed"
+            if action in ("open", "close"): st.session_state.sim_gpio["garage:door"] = "open" if action == "open" else "closed"
 
         st.success("Executed (SIMULATOR).")
-        st.write("**Simulator GPIO state**")
-        st.json(st.session_state.sim_gpio)
+        st.write("**Simulator GPIO state**"); st.json(st.session_state.sim_gpio)
     else:
         try:
             payload = json.dumps(intent).encode("utf-8")
@@ -176,4 +150,4 @@ if run:
             st.error(f"Failed to reach bridge: {e}")
 
 st.divider()
-st.caption("Tip: For Spanish, set ‘Language’ to **es** or leave **auto** (model will detect).")
+st.caption("Set ‘Language’ to **es** for Spanish, or leave **auto** (auto-detect).")

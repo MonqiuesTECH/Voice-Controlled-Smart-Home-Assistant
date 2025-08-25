@@ -1,10 +1,14 @@
 streamlit==1.37.1
-streamlit-webrtc==0.47.7
-av==12.3.0
 numpy==1.26.4
 pydub==0.25.1
 soundfile==0.12.1
+
+# Whisper (CPU)
 faster-whisper==1.0.3
 ctranslate2==4.4.0
-protobuf<4
+
+# Local Arduino bridge (optional)
 pyserial==3.5
+
+# Mic capture without PyAV/WebRTC
+streamlit-mic-recorder==0.0.8

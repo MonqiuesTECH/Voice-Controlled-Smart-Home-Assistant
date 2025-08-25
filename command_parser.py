@@ -1,53 +1,55 @@
 import re
 from typing import Dict, Any, Optional
 
-# Simple, deterministic parser for smart‑home intents.
-# Returns a normalized dict: { intent, action, device, location, value }
-
-LOCATIONS = [
-    "living room", "kitchen", "bedroom", "garage", "office", "hallway", "bathroom"
+# Rooms / Locations
+LOCATIONS_EN = [
+    "living room","kitchen","bedroom","garage","office","hallway","bathroom"
+]
+LOCATIONS_ES = [
+    "sala","cocina","dormitorio","garaje","oficina","pasillo","baño","bano"
 ]
 LOCATION_ALIASES = {
     "livingroom": "living room",
     "living-room": "living room",
 }
 
+# Devices
 DEVICE_SYNONYMS = {
-    "lights": "light",
-    "light": "light",
-    "lamp": "light",
-    "fan": "fan",
-    "thermostat": "thermostat",
-    "ac": "thermostat",
-    "air": "thermostat",
-    "garage": "garage",
-    "garage door": "garage",
-    "door": "garage",
+    # English
+    "lights":"light","light":"light","lamp":"light","fan":"fan",
+    "thermostat":"thermostat","ac":"thermostat","air":"thermostat",
+    "garage":"garage","garage door":"garage","door":"garage",
+    # Spanish
+    "luces":"light","luz":"light","ventilador":"fan",
+    "termostato":"thermostat","aire":"thermostat","ac":"thermostat",
+    "garaje":"garage","puerta del garaje":"garage","puerta":"garage",
 }
 
+# Actions
 ACTION_SYNONYMS = {
-    "on": "on",
-    "off": "off",
-    "open": "open",
-    "close": "close",
-    "up": "open",
-    "down": "close",
-    "start": "on",
-    "stop": "off",
-    "turn on": "on",
-    "turn off": "off",
-    "switch on": "on",
-    "switch off": "off",
-    "set": "set",
+    # English
+    "on":"on","off":"off","open":"open","close":"close","set":"set",
+    "up":"open","down":"close","start":"on","stop":"off",
+    "turn on":"on","turn off":"off","switch on":"on","switch off":"off",
+    # Spanish
+    "encender":"on","prender":"on","apagar":"off",
+    "abrir":"open","cerrar":"close","subir":"open","bajar":"close","ajustar":"set","poner":"set"
 }
 
-def normalize_location(text: str) -> Optional[str]:
+def _normalize_location(text: str) -> Optional[str]:
     t = text.strip().lower()
-    if t in LOCATION_ALIASES:
-        t = LOCATION_ALIASES[t]
-    return t if t in LOCATIONS else None
+    if t in LOCATION_ALIASES: t = LOCATION_ALIASES[t]
+    if t in LOCATIONS_EN: return t
+    if t in LOCATIONS_ES:
+        # map to English canonical names to keep keys stable
+        mapping = {
+            "sala":"living room","cocina":"kitchen","dormitorio":"bedroom","garaje":"garage",
+            "oficina":"office","pasillo":"hallway","baño":"bathroom","bano":"bathroom"
+        }
+        return mapping[t]
+    return None
 
-def extract_number(text: str) -> Optional[float]:
+def _extract_number(text: str) -> Optional[float]:
     m = re.search(r"(-?\d+(\.\d+)?)", text)
     if m:
         try:
@@ -59,71 +61,48 @@ def extract_number(text: str) -> Optional[float]:
 def parse_command(transcript: str) -> Dict[str, Any]:
     t = (transcript or "").strip().lower()
     if not t:
-        return {"intent": "none", "action": None, "device": None, "location": None, "value": None, "raw": transcript}
+        return {"intent":"none","action":None,"device":None,"location":None,"value":None,"raw":transcript}
 
-    # Normalize common multi-word actions
-    t = t.replace("turn on", "on").replace("turn off", "off").replace("switch on", "on").replace("switch off", "off")
+    # Normalize multi-word actions in both languages
+    replacements = {
+        "turn on":"on","turn off":"off","switch on":"on","switch off":"off",
+        "encender":"on","prender":"on","apagar":"off","abrir":"open","cerrar":"close",
+        "ajustar":"set","poner":"set"
+    }
+    for k,v in replacements.items():
+        t = t.replace(k, v)
 
-    # Heuristics:
-    # Devices
+    # Device
     device = None
     for k, v in DEVICE_SYNONYMS.items():
-        if re.search(rf"\b{k}\b", t):
-            device = v
-            break
+        if re.search(rf"\b{re.escape(k)}\b", t):
+            device = v; break
 
-    # Actions
+    # Action
     action = None
-    if re.search(r"\bon\b", t):
-        action = "on"
-    elif re.search(r"\boff\b", t):
-        action = "off"
-    elif re.search(r"\bopen\b", t):
-        action = "open"
-    elif re.search(r"\bclose\b", t):
-        action = "close"
-    elif re.search(r"\bset\b", t):
-        action = "set"
+    for k,v in ACTION_SYNONYMS.items():
+        if re.search(rf"\b{re.escape(k)}\b", t):
+            action = v; break
 
-    # Location (simple heuristic: look for known rooms)
+    # Location
     location = None
-    for loc in LOCATIONS:
+    for loc in LOCATIONS_EN + LOCATIONS_ES + list(LOCATION_ALIASES.keys()):
         if re.search(rf"\b{re.escape(loc)}\b", t):
-            location = loc
-            break
-    # Handle single-word variants like "livingroom"
-    if location is None:
-        for alias, normalized in LOCATION_ALIASES.items():
-            if re.search(rf"\b{re.escape(alias)}\b", t):
-                location = normalized
-                break
+            location = _normalize_location(loc); break
 
-    # Value (typically for thermostat)
+    # Value (e.g., thermostat temp)
     value = None
     if device == "thermostat" or (action == "set" and device):
-        val = extract_number(t)
-        if val is not None:
-            value = int(val)
+        num = _extract_number(t)
+        if num is not None:
+            value = int(num)
 
     # Defaults
     if device is None:
-        # Guess: lights are the most common
-        if action in ("on", "off"):
-            device = "light"
-        elif action in ("open", "close"):
-            device = "garage"
+        if action in ("on","off"): device = "light"
+        elif action in ("open","close"): device = "garage"
+    if device == "light" and location is None: location = "living room"
+    if device == "thermostat" and action is None: action = "set"
 
-    if device == "light" and location is None:
-        location = "living room"
-
-    if device == "thermostat" and action is None:
-        action = "set"
-
-    return {
-        "intent": "device_control" if device else "unknown",
-        "action": action,
-        "device": device,
-        "location": location,
-        "value": value,
-        "raw": transcript,
-    }
+    return {"intent":"device_control" if device else "unknown",
+            "action":action,"device":device,"location":location,"value":value,"raw":transcript}
